@@ -17,4 +17,5 @@ APP_TIME_POSITION - position on the screen, default: `0`, TopCenter=0, TopLeft=1
 Changes allowed during the lifecycle
 
 - Format - change time format
+- Position - change position of the clock
 
