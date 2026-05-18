@@ -1,4 +1,4 @@
-module github.com/AgentNemo00/kigo-time
+module github.com/AgentNemo00/kigo-modules/time
 
 go 1.26.0
 
