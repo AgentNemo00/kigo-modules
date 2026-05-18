@@ -54,7 +54,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cfg := &Time{}
-	err := configuration.ByEnv(cfg)
+	err := configuration.ByEnvWithPrefix("TIME", cfg)
 	if err != nil {
 		log.Ctx(ctx).Err(err)
 		return
@@ -71,7 +71,7 @@ func main() {
 		Name: cfg.Name,
 		PubSubKiGo: cfg.KiGoName,
 		PubSubUrl: cfg.PubSubUrl,
-		Changes: []string{"Format"},
+		Changes: []string{"Format", "Position"},
 		Heartbeat: time.Hour*24,
 	}
 
@@ -86,10 +86,47 @@ func main() {
 
 	//###
 
+	configChances := &kc.ChangesConfig{
+		PubSubUrl: cfg.PubSubUrl,
+		UUID: valueStartUp.ID,
+		Changes: configInit.Changes,
+	}
+
+	cancel, err = kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
+		switch(change) {
+			case "Format":
+				str, ok := value.(string)
+				if !ok {
+					log.Ctx(ctx).Error("invalid value for format change")
+					return
+				}
+				cfg.Format = str
+			case "Position":
+				pos, ok := value.(int)
+				if !ok {
+					log.Ctx(ctx).Error("invalid value for position change")
+					return
+				}
+				cfg.Position = pos
+			default:
+				log.Ctx(ctx).Warn("unknown change: %s", change)
+		}
+	})
+
+	containerization.Callback(func ()  {
+		cancel()
+	})
+
+	if err != nil {
+		log.Ctx(ctx).Err(err)
+		cancel()
+		return
+	}
+
 	configUI := &kc.UIConfig{
 		PubSubKiGoUI: valueStartUp.MessageTo.Render,
 		PubSubUrl: cfg.PubSubUrl,
-		ID: valueStartUp.ID,
+		UUID: valueStartUp.ID,
 	}
 
 	valueUI, valueScreen := kc.GetUIInformation(ctx, configUI)
@@ -119,7 +156,7 @@ func main() {
 		configRender := &kc.RenderConfig{
 			PubSubKiGoUI: valueStartUp.MessageTo.Render,
 			PubSubUrl: cfg.PubSubUrl,
-			ID: valueStartUp.ID,
+			UUID: valueStartUp.ID,
 			Channel: valueUI.Channels[0],
 			Format: valueUI.Formats[0],
 			FPS: 1,
@@ -195,7 +232,7 @@ func cleanUp(ctx context.Context, to string, url string, id string, channel stri
 	configRender := &kc.RenderConfig{
 			PubSubKiGoUI: to,
 			PubSubUrl: url,
-			ID: id,
+			UUID: id,
 			Channel: channel,
 			Format: format,
 			FPS: 1,
