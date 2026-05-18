@@ -5,9 +5,9 @@ import (
 	"image"
 	"time"
 
+	kc "github.com/AgentNemo00/kigo-code"
 	"github.com/AgentNemo00/kigo-core/order"
 	"github.com/AgentNemo00/kigo-core/util"
-	kc "github.com/AgentNemo00/kigo-code"
 	"github.com/AgentNemo00/sca-instruments/configuration"
 	"github.com/AgentNemo00/sca-instruments/containerization"
 	"github.com/AgentNemo00/sca-instruments/log"
@@ -105,6 +105,11 @@ func main() {
 	for {
 		select {
 		case <- ctx.Done():
+			if objID == 0 {
+				return
+			}
+			cleanUp(context.Background(), valueStartUp.MessageTo.Render, 
+				cfg.PubSubUrl, valueStartUp.ID, valueUI.Channels[0], valueUI.Formats[0], objID)
 			return
 		default:
 		}
@@ -118,7 +123,7 @@ func main() {
 			Channel: valueUI.Channels[0],
 			Format: valueUI.Formats[0],
 			FPS: 1,
-			MaxFrameSize: len(img.Pix)*2,
+			MaxFrameSize: len(img.Pix),
 			ObjectID: objID,
 			Timeout: time.Second,
 			Time: 0,
@@ -127,10 +132,6 @@ func main() {
 		valueRender := kc.GetChannel(ctx, configRender)
 
 		if valueRender == nil {
-			return
-		}
-
-		if valueRender.MaxFrameSize < len(img.Pix) {
 			return
 		}
 
@@ -162,7 +163,7 @@ func main() {
 				positionY = 0
 		}
 
-		data := util.FromRGBA(uint32(valueRender.ObjectID), uint16(positionX), uint16(positionY), img)
+		data := util.FromRGBA(uint32(objID), uint16(positionX), uint16(positionY), img)
 
 		_, err = channel.WriteMsg(data)
 		if err != nil{
@@ -188,4 +189,41 @@ func CreateSimple(t time.Time, format string) *image.RGBA {
 	).Padding(10)
 	r.Render(label)
 	return r.Image()
+}
+
+func cleanUp(ctx context.Context, to string, url string, id string, channel string, format string, objID int) {
+	configRender := &kc.RenderConfig{
+			PubSubKiGoUI: to,
+			PubSubUrl: url,
+			ID: id,
+			Channel: channel,
+			Format: format,
+			FPS: 1,
+			MaxFrameSize: 1,
+			ObjectID: objID,
+			Timeout: time.Second,
+			Time: 0,
+	}
+	valueRender := kc.GetChannel(ctx, configRender)
+
+	if valueRender == nil {
+		return
+	}
+
+	channelCleanUP, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
+	if err != nil {
+		log.Ctx(ctx).Err(err)
+		if channelCleanUP != nil {
+			channelCleanUP.Close()
+		}
+		return
+	}
+	// send empty frame to remove the object
+	data := util.FromBytes(objID, 0, 0, 0, 0, 0, []byte{})
+
+	_, err = channelCleanUP.WriteMsg(data)
+	if err != nil{
+		log.Ctx(ctx).Err(err)
+	}
+	channelCleanUP.Close()
 }
