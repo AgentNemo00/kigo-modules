@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"image"
+	"image/jpeg"
 	"image/png"
+	"slices"
 	"time"
 
 	kc "github.com/AgentNemo00/kigo-code"
@@ -27,9 +29,9 @@ const(
 )
 
 const (
-	RAW = iota + 1
-	PNG
-	JPEG
+	RAW = "RAW"
+	PNG = "PNG"
+	JPEG = "JPEG"
 )
 
 type Time struct {
@@ -38,7 +40,7 @@ type Time struct {
 	KiGoName	string
 	Format 		string
 	Position 	int
-	Encoding 	int
+	Encoding 	string
 }
 
 func (t *Time) Default() {
@@ -54,7 +56,7 @@ func (t *Time) Default() {
 	if t.Format == "" {
 		t.Format = "15:04:05"
 	}
-	if t.Encoding == 0 {
+	if t.Encoding == ""  {
 		t.Encoding = PNG
 	}
 	if t.Position == 0 {
@@ -188,9 +190,28 @@ func main() {
 				imgRaw = buf.Bytes()
 				dataLength = len(imgRaw)
 			case JPEG:
-				// TODO JPEG
+				var buf bytes.Buffer
+
+				err := jpeg.Encode(&buf, img, &jpeg.Options{
+					Quality: 80, // 1–100
+				})
+				if err != nil {
+					log.Ctx(ctx).Err(err)
+				}
+
+				imgRaw = buf.Bytes()
+				dataLength = len(imgRaw)
 			default:
 				log.Ctx(ctx).Warn("unknown encoding: %d", cfg.Encoding)
+		}
+
+		format := "RAW"
+
+		if slices.Contains(valueUI.Formats, cfg.Encoding) {
+			format = cfg.Encoding
+		} else {
+			cfg.Encoding = RAW
+			log.Ctx(ctx).Warn("format %d not supported by KiGo, falling back to RAW", cfg.Encoding)
 		}
 
 		configRender := &kc.RenderConfig{
@@ -198,7 +219,7 @@ func main() {
 			PubSubUrl: cfg.PubSubUrl,
 			UUID: valueStartUp.ID,
 			Channel: valueUI.Channels[0],
-			Format: valueUI.Formats[1],
+			Format: format,
 			FPS: 1,
 			MaxFrameSize: dataLength,
 			ObjectID: objID,
