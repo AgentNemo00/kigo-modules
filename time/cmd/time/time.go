@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"image"
+	"image/png"
 	"time"
 
 	kc "github.com/AgentNemo00/kigo-code"
@@ -19,9 +21,15 @@ import (
 )
 
 const(
-	TopCenter = iota
-	TopLeft
+	TopLeft = iota +1
+	TopCenter
 	TopRight
+)
+
+const (
+	RAW = iota + 1
+	PNG
+	JPEG
 )
 
 type Time struct {
@@ -30,6 +38,7 @@ type Time struct {
 	KiGoName	string
 	Format 		string
 	Position 	int
+	Encoding 	int
 }
 
 func (t *Time) Default() {
@@ -45,6 +54,12 @@ func (t *Time) Default() {
 	if t.Format == "" {
 		t.Format = "15:04:05"
 	}
+	if t.Encoding == 0 {
+		t.Encoding = PNG
+	}
+	if t.Position == 0 {
+		t.Position = TopLeft
+	}	
 }
 
 
@@ -92,7 +107,7 @@ func main() {
 		Changes: configInit.Changes,
 	}
 
-	cancel, err = kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
+	cancelSub, err := kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
 		switch(change) {
 			case "Format":
 				str, ok := value.(string)
@@ -114,12 +129,11 @@ func main() {
 	})
 
 	containerization.Callback(func ()  {
-		cancel()
+		cancelSub()
 	})
 
 	if err != nil {
 		log.Ctx(ctx).Err(err)
-		cancel()
 		return
 	}
 
@@ -130,6 +144,8 @@ func main() {
 	}
 
 	valueUI, valueScreen := kc.GetUIInformation(ctx, configUI)
+	
+	log.Ctx(ctx).Info("%#v", valueUI)
 
 	if valueUI == nil || valueScreen == nil {
 		return
@@ -152,15 +168,39 @@ func main() {
 		}
 
 		img := CreateSimple(time.Now(), cfg.Format)
-		
+		width := img.Rect.Bounds().Dx()
+		height := img.Rect.Bounds().Dy()
+		imgRaw := img.Pix
+		dataLength := len(imgRaw)
+
+		switch(cfg.Encoding) {
+			case RAW:
+				// do nothing, already in raw format
+			case PNG:
+				var buf bytes.Buffer
+				encoder := png.Encoder{
+					CompressionLevel: png.BestCompression,
+				}
+				err := encoder.Encode(&buf, img)
+				if err != nil {
+					log.Ctx(ctx).Err(err)
+				}
+				imgRaw = buf.Bytes()
+				dataLength = len(imgRaw)
+			case JPEG:
+				// TODO JPEG
+			default:
+				log.Ctx(ctx).Warn("unknown encoding: %d", cfg.Encoding)
+		}
+
 		configRender := &kc.RenderConfig{
 			PubSubKiGoUI: valueStartUp.MessageTo.Render,
 			PubSubUrl: cfg.PubSubUrl,
 			UUID: valueStartUp.ID,
 			Channel: valueUI.Channels[0],
-			Format: valueUI.Formats[0],
+			Format: valueUI.Formats[1],
 			FPS: 1,
-			MaxFrameSize: len(img.Pix),
+			MaxFrameSize: dataLength,
 			ObjectID: objID,
 			Timeout: time.Second,
 			Time: 0,
@@ -199,8 +239,9 @@ func main() {
 				positionX = (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
 				positionY = 0
 		}
+		log.Ctx(ctx).Info("length: %d", dataLength)
 
-		data := util.FromRGBA(uint32(objID), uint16(positionX), uint16(positionY), img)
+		data := util.FromBytesSigned(uint32(objID), uint16(positionX), uint16(positionY), uint16(width), uint16(height), uint32(dataLength), imgRaw)
 
 		_, err = channel.WriteMsg(data)
 		if err != nil{
