@@ -202,7 +202,7 @@ func main() {
 				imgRaw = buf.Bytes()
 				dataLength = len(imgRaw)
 			default:
-				log.Ctx(ctx).Warn("unknown encoding: %d", cfg.Encoding)
+				log.Ctx(ctx).Warn("unknown encoding: %s", cfg.Encoding)
 		}
 
 		format := "RAW"
@@ -211,7 +211,7 @@ func main() {
 			format = cfg.Encoding
 		} else {
 			cfg.Encoding = RAW
-			log.Ctx(ctx).Warn("format %d not supported by KiGo, falling back to RAW", cfg.Encoding)
+			log.Ctx(ctx).Warn("format %s not supported by KiGo, falling back to RAW", cfg.Encoding)
 		}
 
 		configRender := &kc.RenderConfig{
