@@ -3,10 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
-	"image/jpeg"
 	"image/png"
-	"slices"
 	"time"
 
 	kc "github.com/AgentNemo00/kigo-code"
@@ -15,7 +14,7 @@ import (
 	"github.com/AgentNemo00/sca-instruments/configuration"
 	"github.com/AgentNemo00/sca-instruments/containerization"
 	"github.com/AgentNemo00/sca-instruments/log"
-	"github.com/EBWi11/mmap_ringbuffer"
+	"github.com/AgentNemo00/sca-instruments/pubsub/nats"
 	"github.com/gogpu/ui/offscreen"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/theme/material3"
@@ -23,29 +22,20 @@ import (
 )
 
 const(
-	TopLeft = iota +1
-	TopCenter
-	TopRight
+	Format = "PNG"
+	Channel = "PubSub"
 )
 
-const (
-	RAW = "RAW"
-	PNG = "PNG"
-	JPEG = "JPEG"
-)
-
-type Time struct {
+type Text struct {
 	Name  	   	string
 	PubSubUrl  	string
 	KiGoName	string
-	Format 		string
-	Position 	int
-	Encoding 	string
+	Value 		string
 }
 
-func (t *Time) Default() {
+func (t *Text) Default() {
 	if t.Name == "" {
-		t.Name = "clock"
+		t.Name = "text"
 	}
 	if t.PubSubUrl == "" {
 		t.PubSubUrl = "nats://127.0.0.1:4222"
@@ -53,15 +43,9 @@ func (t *Time) Default() {
 	if t.KiGoName == "" {
 		t.KiGoName = "KiGo"
 	}
-	if t.Format == "" {
-		t.Format = "15:04:05"
+	if t.Value == "" {
+		t.Value = "Welcome to KiGo"
 	}
-	if t.Encoding == ""  {
-		t.Encoding = PNG
-	}
-	if t.Position == 0 {
-		t.Position = TopLeft
-	}	
 }
 
 
@@ -70,8 +54,8 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cfg := &Time{}
-	err := configuration.ByEnvWithPrefix("TIME", cfg)
+	cfg := &Text{}
+	err := configuration.ByEnvWithPrefix("TEXT", cfg)
 	if err != nil {
 		log.Ctx(ctx).Err(err)
 		return
@@ -88,7 +72,7 @@ func main() {
 		Name: cfg.Name,
 		PubSubKiGo: cfg.KiGoName,
 		PubSubUrl: cfg.PubSubUrl,
-		Changes: []string{"Format", "Position"},
+		Changes: []string{"Value"},
 		Heartbeat: time.Hour*24,
 	}
 
@@ -111,20 +95,13 @@ func main() {
 
 	cancelSub, err := kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
 		switch(change) {
-			case "Format":
+			case "Value":
 				str, ok := value.(string)
 				if !ok {
-					log.Ctx(ctx).Error("invalid value for format change")
+					log.Ctx(ctx).Error("invalid value for value change")
 					return
 				}
-				cfg.Format = str
-			case "Position":
-				pos, ok := value.(int)
-				if !ok {
-					log.Ctx(ctx).Error("invalid value for position change")
-					return
-				}
-				cfg.Position = pos
+				cfg.Value = str
 			default:
 				log.Ctx(ctx).Warn("unknown change: %s", change)
 		}
@@ -156,70 +133,43 @@ func main() {
 	// ###
 
 	objID := 0
-
+	i := 0
 	for {
 		select {
 		case <- ctx.Done():
 			if objID == 0 {
 				return
 			}
-			cleanUp(context.Background(), valueStartUp.MessageTo.Render, 
-				cfg.PubSubUrl, valueStartUp.ID, valueUI.Channels[0], objID)
+			log.Ctx(ctx).Info("cleanup")
+			cleanUp(context.Background(), cfg.PubSubUrl, valueStartUp.MessageTo.Render, 
+				cfg.PubSubUrl, valueStartUp.ID, Channel, objID)
 			return
 		default:
 		}
 
-		img := CreateSimple(time.Now(), cfg.Format)
+		img := CreateSimple(fmt.Sprintf("%s %d",cfg.Value, i))
 		width := img.Rect.Bounds().Dx()
 		height := img.Rect.Bounds().Dy()
-		imgRaw := img.Pix
+
+
+		var buf bytes.Buffer
+		encoder := png.Encoder{
+			CompressionLevel: png.BestCompression,
+		}
+		err := encoder.Encode(&buf, img)
+		if err != nil {
+			log.Ctx(ctx).Err(err)
+		}
+
+		imgRaw := buf.Bytes()
 		dataLength := len(imgRaw)
-
-		switch(cfg.Encoding) {
-			case RAW:
-				// do nothing, already in raw format
-			case PNG:
-				var buf bytes.Buffer
-				encoder := png.Encoder{
-					CompressionLevel: png.BestCompression,
-				}
-				err := encoder.Encode(&buf, img)
-				if err != nil {
-					log.Ctx(ctx).Err(err)
-				}
-				imgRaw = buf.Bytes()
-				dataLength = len(imgRaw)
-			case JPEG:
-				var buf bytes.Buffer
-
-				err := jpeg.Encode(&buf, img, &jpeg.Options{
-					Quality: 80, // 1–100
-				})
-				if err != nil {
-					log.Ctx(ctx).Err(err)
-				}
-
-				imgRaw = buf.Bytes()
-				dataLength = len(imgRaw)
-			default:
-				log.Ctx(ctx).Warn("unknown encoding: %s", cfg.Encoding)
-		}
-
-		format := "RAW"
-
-		if slices.Contains(valueUI.Formats, cfg.Encoding) {
-			format = cfg.Encoding
-		} else {
-			cfg.Encoding = RAW
-			log.Ctx(ctx).Warn("format %s not supported by KiGo, falling back to RAW", cfg.Encoding)
-		}
 
 		configRender := &kc.RenderConfig{
 			PubSubKiGoUI: valueStartUp.MessageTo.Render,
 			PubSubUrl: cfg.PubSubUrl,
 			UUID: valueStartUp.ID,
-			Channel: valueUI.Channels[0],
-			Format: format,
+			Channel: Channel,
+			Format: Format,
 			FPS: 1,
 			MaxFrameSize: dataLength,
 			ObjectID: objID,
@@ -237,50 +187,37 @@ func main() {
 			objID = valueRender.ObjectID
 		}
 
-		channel, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
-		if err != nil {
-			log.Ctx(ctx).Err(err)
-			if channel != nil {
-				channel.Close()
-			}
-			return
-		}
+		positionX := (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
+		positionY := (valueRender.ScreenHeight / 2) - (img.Rect.Dy() / 2)
 
-		positionX := 0
-		positionY := 0
-
-		switch (cfg.Position) {
-			case TopLeft:
-				positionX = 0
-				positionY = 0
-			case TopRight:
-				positionX = valueRender.ScreenWidth - img.Rect.Dx()
-				positionY = 0
-			case TopCenter:
-				positionX = (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
-				positionY = 0
-		}
 
 		data := util.FromBytesSigned(uint32(objID), uint16(positionX), uint16(positionY), uint16(width), uint16(height), uint32(dataLength), imgRaw)
 
-		_, err = channel.WriteMsg(data)
-		if err != nil{
+		log.Ctx(ctx).Info("length %d", len(imgRaw))
+
+		pub, err := nats.PublisherWithURL[[]byte](cfg.PubSubUrl)
+		if err != nil {
+			log.Ctx(ctx).Err(err)
+			continue
+		}
+		err = pub.Publish(ctx, valueRender.ChannelName, data)
+		if err != nil {
 			log.Ctx(ctx).Err(err)
 		}
-		channel.Close()
-		time.Sleep(time.Millisecond*500)
+		i++
+		time.Sleep(time.Second)
+	
 	}
 }
 
-func CreateSimple(t time.Time, format string) *image.RGBA {
+func CreateSimple(value string) *image.RGBA {
 	m3 := material3.New(widget.Hex(0x6750A4))
 	r := offscreen.NewRenderer(0, 0,
 		offscreen.WithFitSize(),
 		offscreen.WithTheme(m3),
 	)
-	now := t.Format(format)
 	label := primitives.Box(
-		primitives.Text(now).
+		primitives.Text(value).
 			FontSize(32).
 			Bold().
 			Color(widget.RGBA8(225, 225, 255, 255)),
@@ -289,7 +226,7 @@ func CreateSimple(t time.Time, format string) *image.RGBA {
 	return r.Image()
 }
 
-func cleanUp(ctx context.Context, to string, url string, id string, channel string, objID int) {
+func cleanUp(ctx context.Context, pubsuburl, to string, url string, id string, channel string, objID int) {
 	configRender := &kc.RenderConfig{
 			PubSubKiGoUI: to,
 			PubSubUrl: url,
@@ -308,20 +245,16 @@ func cleanUp(ctx context.Context, to string, url string, id string, channel stri
 		return
 	}
 
-	channelCleanUP, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
-	if err != nil {
-		log.Ctx(ctx).Err(err)
-		if channelCleanUP != nil {
-			channelCleanUP.Close()
-		}
-		return
-	}
 	// send empty frame to remove the object
 	data := util.FromBytes(objID, 0, 0, 0, 0, 0, []byte{})
 
-	_, err = channelCleanUP.WriteMsg(data)
-	if err != nil{
+	pub, err := nats.PublisherWithURL[[]byte](pubsuburl)
+	if err != nil {
+		log.Ctx(ctx).Err(err)
+		
+	}
+	err = pub.Publish(ctx, valueRender.ChannelName, data)
+	if err != nil {
 		log.Ctx(ctx).Err(err)
 	}
-	channelCleanUP.Close()
 }
