@@ -156,16 +156,76 @@ func main() {
 		return
 	}
 
+
+
+	format := RAW
+
+	// check for encoding format, if not supported by KiGo, fallback to RAW
+	if slices.Contains(valueUI.Formats, cfg.Encoding) {
+		format = cfg.Encoding
+	}
+
+	img := CreateSimple(time.Now(), cfg.Format)
+
 	objID := 0
+
+		// create render desire
+	configRender := &kc.RenderConfig{
+		PubSubKiGoUI: valueStartUp.MessageTo.Render, // KIGOUI sub
+		PubSubUrl: cfg.PubSubUrl,
+		UUID: valueStartUp.ID,						// module ID
+		Channel: valueUI.Channels[0],				// channel to use
+		Format: format,								// format to use
+		FPS: 1,										// FPS per second
+		MaxFrameSize: len(img.Pix), 					// max size of frame to send
+		ObjectID: objID,							// object ID
+		Timeout: time.Second,                       // timeout per frame
+		Time: 0,
+	}
+
+	valueRender := kc.GetChannel(ctx, configRender)
+
+	if objID == 0 {
+		objID = valueRender.ObjectID
+	}
+
+	positionX := 0
+	positionY := 0
+
+	switch (cfg.Position) {
+		case TopLeft:
+			positionX = 0
+			positionY = 0
+		case TopRight:
+			positionX = valueRender.ScreenWidth - img.Rect.Dx()
+			positionY = 0
+		case TopCenter:
+			positionX = (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
+			positionY = 0
+	}
+
+	channel, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
+	if err != nil {
+		log.Ctx(ctx).Err(err)
+		if channel != nil {
+			channel.Close()
+		}
+		return
+	}
+
+
 	for {
 		select {
 		case <- ctx.Done():
 			if objID == 0 {
 				return
 			}
-			// clean up oject after ctx is done
-			cleanUp(context.Background(), valueStartUp.MessageTo.Render, 
-				cfg.PubSubUrl, valueStartUp.ID, valueUI.Channels[0], objID)
+			data := util.FromBytes(objID, 0, 0, 0, 0, 0, []byte{})
+			_, err = channel.WriteMsg(data)
+			if err != nil{
+				log.Ctx(ctx).Err(err)
+			}
+			channel.Close()
 			return
 		default:
 		}
@@ -178,14 +238,10 @@ func main() {
 		height := img.Rect.Bounds().Dy()
 		imgRaw := img.Pix
 		dataLength := len(imgRaw)
-		format := "RAW"
 
-		// check for encoding format, if not supported by KiGo, fallback to RAW
-		if slices.Contains(valueUI.Formats, cfg.Encoding) {
-			format = cfg.Encoding
-		}
 		// encode image to desired format
 		switch(cfg.Encoding) {
+			case RAW:
 			case PNG:
 				var buf bytes.Buffer
 				encoder := png.Encoder{
@@ -213,58 +269,13 @@ func main() {
 				log.Ctx(ctx).Warn("unknown encoding: %s", cfg.Encoding)
 		}
 
-		// create render desire
-		configRender := &kc.RenderConfig{
-			PubSubKiGoUI: valueStartUp.MessageTo.Render, // KIGOUI sub
-			PubSubUrl: cfg.PubSubUrl,
-			UUID: valueStartUp.ID,						// module ID
-			Channel: valueUI.Channels[0],				// channel to use
-			Format: format,								// format to use
-			FPS: 2,										// FPS per second
-			MaxFrameSize: dataLength, 					// max size of frame to send
-			ObjectID: objID,							// object ID
-			Timeout: time.Second,                       // timeout per frame
-			Time: 0,
-		}
-
-		valueRender := kc.GetChannel(ctx, configRender)
-
-		if objID == 0 {
-			objID = valueRender.ObjectID
-		}
-
-		channel, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
-		if err != nil {
-			log.Ctx(ctx).Err(err)
-			if channel != nil {
-				channel.Close()
-			}
-			return
-		}
-
-		positionX := 0
-		positionY := 0
-
-		switch (cfg.Position) {
-			case TopLeft:
-				positionX = 0
-				positionY = 0
-			case TopRight:
-				positionX = valueRender.ScreenWidth - img.Rect.Dx()
-				positionY = 0
-			case TopCenter:
-				positionX = (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
-				positionY = 0
-		}
-
 		data := util.FromBytesSigned(uint32(objID), uint16(positionX), uint16(positionY), uint16(width), uint16(height), uint32(dataLength), imgRaw)
 
 		_, err = channel.WriteMsg(data)
 		if err != nil{
 			log.Ctx(ctx).Err(err)
 		}
-		channel.Close()
-		time.Sleep(time.Millisecond*500)
+		time.Sleep(time.Second)
 	}
 }
 
@@ -283,41 +294,4 @@ func CreateSimple(t time.Time, format string) *image.RGBA {
 	).Padding(10)
 	r.Render(label)
 	return r.Image()
-}
-
-func cleanUp(ctx context.Context, to string, url string, id string, channel string, objID int) {
-	configRender := &kc.RenderConfig{
-			PubSubKiGoUI: to,
-			PubSubUrl: url,
-			UUID: id,
-			Channel: channel,
-			Format: "RAW",
-			FPS: 1,
-			MaxFrameSize: 1,
-			ObjectID: objID,
-			Timeout: time.Second,
-			Time: 0,
-	}
-	valueRender := kc.GetChannel(ctx, configRender)
-
-	if valueRender == nil {
-		return
-	}
-
-	channelCleanUP, err := ringbuffer.OpenRingBuffer(valueRender.ChannelName)
-	if err != nil {
-		log.Ctx(ctx).Err(err)
-		if channelCleanUP != nil {
-			channelCleanUP.Close()
-		}
-		return
-	}
-	// send empty frame to remove the object
-	data := util.FromBytes(objID, 0, 0, 0, 0, 0, []byte{})
-
-	_, err = channelCleanUP.WriteMsg(data)
-	if err != nil{
-		log.Ctx(ctx).Err(err)
-	}
-	channelCleanUP.Close()
 }
