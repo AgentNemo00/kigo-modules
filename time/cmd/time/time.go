@@ -66,10 +66,14 @@ func (t *Time) Default() {
 
 
 func main() {
+	// Initialize module
+
+	// track start time
 	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Get config
 	cfg := &Time{}
 	err := configuration.ByEnvWithPrefix("TIME", cfg)
 	if err != nil {
@@ -92,23 +96,23 @@ func main() {
 		Heartbeat: time.Hour*24,
 	}
 
+	// First call to KIGO for initialization
 	valueStartUp := kc.InitializeModule(ctx, start, configInit, func(payload order.OrderShutdownPayload) {
-		log.Ctx(ctx).Warn(payload.Reason)
+		log.Ctx(ctx).Warn("%s", payload.Reason)
 		cancel()
 	})
-	
 	if valueStartUp == nil {
 		return
 	}
 
-	//###
+	
 
+	// create callback for changes trigger by other modules
 	configChances := &kc.ChangesConfig{
 		PubSubUrl: cfg.PubSubUrl,
 		UUID: valueStartUp.ID,
 		Changes: configInit.Changes,
 	}
-
 	cancelSub, err := kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
 		switch(change) {
 			case "Format":
@@ -139,45 +143,49 @@ func main() {
 		return
 	}
 
+	// create config for UI information
 	configUI := &kc.UIConfig{
 		PubSubKiGoUI: valueStartUp.MessageTo.Render,
 		PubSubUrl: cfg.PubSubUrl,
 		UUID: valueStartUp.ID,
 	}
 
+	// get UI informations
 	valueUI, valueScreen := kc.GetUIInformation(ctx, configUI)
-	
-	log.Ctx(ctx).Info("%#v", valueUI)
-
 	if valueUI == nil || valueScreen == nil {
 		return
 	}
-	log.Ctx(ctx).Info("%#v", valueScreen)
-	// ###
 
 	objID := 0
-
 	for {
 		select {
 		case <- ctx.Done():
 			if objID == 0 {
 				return
 			}
+			// clean up oject after ctx is done
 			cleanUp(context.Background(), valueStartUp.MessageTo.Render, 
 				cfg.PubSubUrl, valueStartUp.ID, valueUI.Channels[0], objID)
 			return
 		default:
 		}
 
+		// create image with current time
 		img := CreateSimple(time.Now(), cfg.Format)
+
+		// define image properties
 		width := img.Rect.Bounds().Dx()
 		height := img.Rect.Bounds().Dy()
 		imgRaw := img.Pix
 		dataLength := len(imgRaw)
+		format := "RAW"
 
+		// check for encoding format, if not supported by KiGo, fallback to RAW
+		if slices.Contains(valueUI.Formats, cfg.Encoding) {
+			format = cfg.Encoding
+		}
+		// encode image to desired format
 		switch(cfg.Encoding) {
-			case RAW:
-				// do nothing, already in raw format
 			case PNG:
 				var buf bytes.Buffer
 				encoder := png.Encoder{
@@ -205,33 +213,21 @@ func main() {
 				log.Ctx(ctx).Warn("unknown encoding: %s", cfg.Encoding)
 		}
 
-		format := "RAW"
-
-		if slices.Contains(valueUI.Formats, cfg.Encoding) {
-			format = cfg.Encoding
-		} else {
-			cfg.Encoding = RAW
-			log.Ctx(ctx).Warn("format %s not supported by KiGo, falling back to RAW", cfg.Encoding)
-		}
-
+		// create render desire
 		configRender := &kc.RenderConfig{
-			PubSubKiGoUI: valueStartUp.MessageTo.Render,
+			PubSubKiGoUI: valueStartUp.MessageTo.Render, // KIGOUI sub
 			PubSubUrl: cfg.PubSubUrl,
-			UUID: valueStartUp.ID,
-			Channel: valueUI.Channels[0],
-			Format: format,
-			FPS: 1,
-			MaxFrameSize: dataLength,
-			ObjectID: objID,
-			Timeout: time.Second,
+			UUID: valueStartUp.ID,						// module ID
+			Channel: valueUI.Channels[0],				// channel to use
+			Format: format,								// format to use
+			FPS: 2,										// FPS per second
+			MaxFrameSize: dataLength, 					// max size of frame to send
+			ObjectID: objID,							// object ID
+			Timeout: time.Second,                       // timeout per frame
 			Time: 0,
 		}
 
 		valueRender := kc.GetChannel(ctx, configRender)
-
-		if valueRender == nil {
-			return
-		}
 
 		if objID == 0 {
 			objID = valueRender.ObjectID
