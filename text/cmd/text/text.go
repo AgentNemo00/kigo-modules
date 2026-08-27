@@ -133,16 +133,43 @@ func main() {
 	// ###
 
 	objID := 0
-	i := 0
+	i := 1
+
+	img := CreateSimple(fmt.Sprintf("%s %d",cfg.Value, i))
+
+	configRender := &kc.RenderConfig{
+		PubSubKiGoUI: valueStartUp.MessageTo.Render,
+		PubSubUrl: cfg.PubSubUrl,
+		UUID: valueStartUp.ID,
+		Channel: Channel,
+		Format: Format,
+		FPS: 1,
+		MaxFrameSize: len(img.Pix),
+		ObjectID: objID,
+		Timeout: time.Second,
+		Time: 0,
+	}
+
+	valueRender := kc.GetChannel(ctx, configRender)
+
+	pub, err := nats.PublisherWithURL[[]byte](cfg.PubSubUrl)
+	if err != nil {
+		log.Ctx(ctx).Err(err)
+		return
+	}
+
 	for {
 		select {
 		case <- ctx.Done():
 			if objID == 0 {
 				return
 			}
-			log.Ctx(ctx).Info("cleanup")
-			cleanUp(context.Background(), cfg.PubSubUrl, valueStartUp.MessageTo.Render, 
-				cfg.PubSubUrl, valueStartUp.ID, Channel, objID)
+			data := util.FromBytes(objID, 0, 0, 0, 0, 0, []byte{})
+			err = pub.Publish(context.Background(), valueRender.ChannelName, data)
+			if err != nil {
+				log.Ctx(ctx).Err(err)
+			}
+			time.Sleep(time.Millisecond*500)
 			return
 		default:
 		}
@@ -164,25 +191,6 @@ func main() {
 		imgRaw := buf.Bytes()
 		dataLength := len(imgRaw)
 
-		configRender := &kc.RenderConfig{
-			PubSubKiGoUI: valueStartUp.MessageTo.Render,
-			PubSubUrl: cfg.PubSubUrl,
-			UUID: valueStartUp.ID,
-			Channel: Channel,
-			Format: Format,
-			FPS: 1,
-			MaxFrameSize: dataLength,
-			ObjectID: objID,
-			Timeout: time.Second,
-			Time: 0,
-		}
-
-		valueRender := kc.GetChannel(ctx, configRender)
-
-		if valueRender == nil {
-			return
-		}
-
 		if objID == 0 {
 			objID = valueRender.ObjectID
 		}
@@ -190,23 +198,14 @@ func main() {
 		positionX := (valueRender.ScreenWidth / 2) - (img.Rect.Dx() / 2)
 		positionY := (valueRender.ScreenHeight / 2) - (img.Rect.Dy() / 2)
 
-
 		data := util.FromBytesSigned(uint32(objID), uint16(positionX), uint16(positionY), uint16(width), uint16(height), uint32(dataLength), imgRaw)
 
-		log.Ctx(ctx).Info("length %d", len(imgRaw))
-
-		pub, err := nats.PublisherWithURL[[]byte](cfg.PubSubUrl)
-		if err != nil {
-			log.Ctx(ctx).Err(err)
-			continue
-		}
 		err = pub.Publish(ctx, valueRender.ChannelName, data)
 		if err != nil {
 			log.Ctx(ctx).Err(err)
 		}
 		i++
 		time.Sleep(time.Second)
-	
 	}
 }
 
