@@ -123,7 +123,7 @@ func main() {
 	maxHeight := valueScreen.Height
 	maxWidth := valueScreen.Width
 
-	time.AfterFunc(time.Second*3, func ()  {
+	go time.AfterFunc(time.Second*3, func ()  {
 		cfg.queue = append(cfg.queue, "Test")
 	})
 	
