@@ -129,7 +129,10 @@ func main() {
 			if err != nil{
 				log.Ctx(ctx).Err(err)
 			}
-			channel.Close()
+			err = channel.Close()
+			if err != nil {
+				log.Ctx(ctx).Err(err)
+			}
 			return
 		default:
 		}
