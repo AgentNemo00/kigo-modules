@@ -37,7 +37,7 @@ type Text struct {
 
 func (t *Text) Default() {
 	if t.Name == "" {
-		t.Name = "notification"
+		t.Name = "notifications"
 	}
 	if t.PubSubUrl == "" {
 		t.PubSubUrl = "nats://127.0.0.1:4222"
@@ -75,7 +75,7 @@ func main() {
 		PubSubKiGo: cfg.KiGoName,
 		PubSubUrl: cfg.PubSubUrl,
 		Changes: []string{"Notify"},
-		Heartbeat: time.Minute,
+		Heartbeat: time.Hour,
 	}
 	valueStartUp := kc.InitializeModule(ctx, start, configInit, func(payload order.OrderShutdownPayload) {
 		log.Ctx(ctx).Warn(payload.Reason)
@@ -90,6 +90,7 @@ func main() {
 	}
 
 	cancelSub, err := kc.ListenForChanges(ctx, configChances, func (change string, value any)  {
+		log.Ctx(ctx).Info("Any")
 		switch(change) {
 			case "Notify":
 				str, ok := value.(string)
@@ -122,10 +123,6 @@ func main() {
 	
 	maxHeight := valueScreen.Height
 	maxWidth := valueScreen.Width
-
-	go time.AfterFunc(time.Second*3, func ()  {
-		cfg.queue = append(cfg.queue, "Test")
-	})
 	
 	for {
 		select{
