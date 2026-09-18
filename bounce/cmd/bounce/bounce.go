@@ -8,6 +8,7 @@ import (
 	kc "github.com/AgentNemo00/kigo-code"
 	"github.com/AgentNemo00/kigo-core/order"
 	"github.com/AgentNemo00/kigo-core/util"
+	"github.com/AgentNemo00/kigo-core/wire"
 	"github.com/AgentNemo00/sca-instruments/configuration"
 	"github.com/AgentNemo00/sca-instruments/containerization"
 	"github.com/AgentNemo00/sca-instruments/log"
@@ -129,6 +130,13 @@ func main() {
 			if err != nil{
 				log.Ctx(ctx).Err(err)
 			}
+			
+			data = util.Command(objID, wire.Close)
+			_, err = channel.WriteMsg(data)
+			if err != nil{
+				log.Ctx(ctx).Err(err)
+			}
+
 			err = channel.Close()
 			if err != nil {
 				log.Ctx(ctx).Err(err)
